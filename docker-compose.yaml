@@ -1,0 +1,13 @@
+version: "3.9"
+services:
+  db:
+    image: postgres
+    restart: always
+    environment:
+      POSTGRES_PASSWORD: root
+    ports:
+      - 5432:5432
+    volumes:
+      - ./db/data:/var/lib/postgresql/data
+    extra_hosts:
+      - "postgres:172.19.0.1"
