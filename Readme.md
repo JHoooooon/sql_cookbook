@@ -86,6 +86,19 @@ INSERT INTO DEPT VALUES (20, 'RESEARCH',   'DALLAS');
 INSERT INTO DEPT VALUES (30, 'SALES',      'CHICAGO');
 INSERT INTO DEPT VALUES (40, 'OPERATIONS', 'BOSTON');
 
+DROP TABLE IF EXISTS emp_bonus;
+
+CREATE TABLE emp_bonus (
+  empno decimal(4,0) default NULL,
+  received date default NULL,
+  type decimal(1,0) default NULL
+);
+
+INSERT INTO emp_bonus VALUES ('7934','2005-03-17','1');
+INSERT INTO emp_bonus VALUES ('7934','2005-02-15','2');
+INSERT INTO emp_bonus VALUES ('7839','2005-02-15','3');
+INSERT INTO emp_bonus VALUES ('7782','2005-02-15','1');
+
 CREATE TABLE T1 (ID INTEGER);
 
 INSERT INTO T1 VALUES (1);
