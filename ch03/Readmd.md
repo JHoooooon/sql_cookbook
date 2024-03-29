@@ -530,3 +530,331 @@ SELECT
     ON e.deptno = d.deptno
 WHERE e.deptno = 10;
 ```
+
+## 집계를 사용할 때 조인 수행
+
+부서 10 에 해당하는 사원의 급여 합계와 보너스 합계를 찾는다. 일부 사원은 보너스를 두개 이상 받는데, `EMP` 테이블과 `EMP_BONUS` 테이블간의 조인 때문에 집계함수 `SUM` 이 잘못된 값을 반환한다
+
+```sql
+SELECT
+        e.empno
+    ,   e.ename
+    ,   e.sal
+    ,   e.deptno
+    ,   e.sal * CASE
+                    WHEN eb.type = 1 then .1
+                    WHEN eb.type = 2 then .2
+                    ELSE .3
+                END bouns
+    FROM emp e, emp_bonus eb
+WHERE e.empno = eb.empno
+    AND e.deptno = 10;
+```
+
+```sh
+empno|ename |sal |deptno|bouns |
+-----+------+----+------+------+
+ 7934|MILLER|1300|    10| 260.0|
+ 7839|KING  |5000|    10|1500.0|
+ 7782|CLARK |2450|    10| 245.0|
+ 7934|MILLER|1300|    10| 130.0|
+```
+
+```sql
+SELECT
+    sum(sal) as total_sal
+    FROM emp e
+WHERE e.deptno = 10;
+```
+
+```sh
+total_sal|
+---------+
+     8750|
+```
+
+`total_sal` 값은 `8750` 이다
+
+```sql
+SELECT
+        deptno
+    ,   sum(sal) AS total_sal
+    ,   sum(bonus) AS total_bonus
+    FROM (
+        SELECT
+                e.empno
+            ,   e.ename
+            ,   e.sal
+            ,   e.deptno
+            ,   e.sal * CASE
+                            WHEN eb.type = 1 then .1
+                            WHEN eb.type = 2 then .2
+                            ELSE .3
+                        END AS "bonus"
+            FROM emp e, emp_bonus eb
+        WHERE e.empno = eb.empno
+            AND e.deptno = 10
+    )
+GROUP BY deptno;
+```
+
+```sh
+deptno|total_sal|total_bonus|
+------+---------+-----------+
+    10|    10050|     2135.0|
+```
+
+`total_sal` 값이 `10050` 이다
+값이 다르며, 중복된 값에 의해 `1300` 더해진것을 볼 수 있다
+
+```sql
+--  DISTINCT 로 해결
+--  SAL 부분만 두번 반복되지 않도록, DISTINCT 로
+--  하나로 만든다
+
+SELECT
+        deptno
+    ,   sum(distinct sal) AS total_sal
+    ,   sum(bonus) AS total_bonus
+    FROM (
+        SELECT
+                e.empno
+            ,   e.ename
+            ,   e.sal
+            ,   e.deptno
+            ,   e.sal * CASE
+                            WHEN eb.type = 1 then .1
+                            WHEN eb.type = 2 then .2
+                            ELSE .3
+                        END AS "bonus"
+            FROM emp e, emp_bonus eb
+        WHERE e.empno = eb.empno
+            AND e.deptno = 10
+    )
+GROUP BY deptno;
+
+--  SUM OVER 를 사용
+--  POSTGRESQL 에서는 WINDOW 함수에서
+--  DISTINCT 사용이 불가하다
+--  참고용으로 살펴보자
+
+SELECT
+        e.empno
+    ,   e.ename
+    ,   sum(DISTINCT e.sal) OVER
+        (
+            PARTITION BY e.deptno
+        ) AS total_sal
+    ,   sum(e.sal *
+            CASE
+                WHEN eb.type = 1 THEN .1
+                WHEN eb.type = 2 THEN .2
+                ELSE .3
+            END
+        ) OVER
+        (
+            PARTITION BY e.deptno
+        ) AS total_bonus
+    FROM emp e, emp_bonus eb
+WHERE e.empno = eb.empno
+    AND e.deptno = 10;
+```
+
+## 집계시 외부 조인 수행
+
+```sql
+SELECT
+    *
+    FROM emp_bonus;
+```
+
+```sh
+empno|received  |type|
+-----+----------+----+
+ 7934|2005-02-15|   2|
+ 7934|2005-03-17|   1|
+```
+
+이상황에서 다음처럼 하면 서브쿼리상에 반환된 테이블만 처리한다
+
+```sql
+SELECT
+        deptno
+    ,   sum(sal) as total_sal
+    ,   sum(bonus) as total_bonus
+    FROM (
+        SELECT
+                e.empno
+            ,   e.ename
+            ,   e.sal
+            ,   e.deptno
+            ,   e.sal * CASE
+                    WHEN eb.type = 1 THEN .1
+                    WHEN eb.type = 2 THEN .2
+                    ELSE .3
+                END bonus
+            FROM emp e, emp_bonus eb
+            WHERE e.empno = eb.empno
+                AND e.deptno = 10
+    )
+GROUP BY deptno;
+```
+
+```sql
+deptno|total_sal|total_bonus|
+------+---------+------------+
+    10|     2600|       390.0|
+```
+
+이는 보너스를 받은 사원의 모든 합계만 처리된다
+게다가 `total_bonus` 는 맞니만 `MILLER` 의 월급이 두번 합산된다
+잘못되엇다
+
+```sql
+SELECT
+        deptno
+    ,   sum(DISTINCT sal) as total_sal
+    ,   sum(bonus) as toatal_bonus
+    FROM (
+        SELECT
+                e.empno
+            ,   e.ename
+            ,   e.sal
+            ,   e.deptno
+            ,   e.sal * CASE
+                    WHEN eb.type = 1 THEN .1
+                    WHEN eb.type = 2 THEN .2
+                    ELSE .3
+                END bonus
+            FROM emp e left outer join emp_bonus eb
+            ON e.empno = eb.empno
+            WHERE e.deptno = 10
+    )
+GROUP BY deptno;
+```
+
+보너스를 받은 사원만 아니라, 다른 사원의 합계처리도 해야 하므로, `OUTER JOIN` 을 해주면 처리된다
+
+## 여러 테이블에서 누락된 데이터 반환
+
+```sql
+--  YODA 사원 삽입
+--  YODA 는 아직 부서 배정을 받지 못했다
+
+INSERT INTO
+emp (empno, ename, job, mgr, hiredate, sal, comm, deptno) SELECT 111, 'YODA', 'JEDI', null, hiredate, sal, comm, null
+FROM emp
+where ename = 'KING';
+```
+
+```sql
+SELECT d.deptno, d.dname, e.ename
+    FROM dept d
+    LEFT JOIN emp e
+    ON d.deptno = e.deptno;
+```
+
+```sh
+--  YODA 누락
+deptno|dname     |ename |
+------+----------+------+
+    10|ACCOUNTING|MILLER|
+    10|ACCOUNTING|KING  |
+    10|ACCOUNTING|CLARK |
+    20|RESEARCH  |FORD  |
+    20|RESEARCH  |ADAMS |
+    20|RESEARCH  |SCOTT |
+    20|RESEARCH  |JONES |
+    20|RESEARCH  |SMITH |
+    30|SALES     |JAMES |
+    30|SALES     |TURNER|
+    30|SALES     |BLAKE |
+    30|SALES     |MARTIN|
+    30|SALES     |WARD  |
+    30|SALES     |ALLEN |
+    40|OPERATIONS|      |
+```
+
+```sql
+SELECT d.deptno, d.dname, e.ename
+    FROM dept d
+    RIGHT JOIN emp e
+    ON d.deptno = e.deptno;
+```
+
+```sh
+--  OPERATIONS 누락
+deptno|dname     |ename |
+------+----------+------+
+    10|ACCOUNTING|MILLER|
+    10|ACCOUNTING|KING  |
+    10|ACCOUNTING|CLARK |
+    20|RESEARCH  |FORD  |
+    20|RESEARCH  |ADAMS |
+    20|RESEARCH  |SCOTT |
+    20|RESEARCH  |JONES |
+    20|RESEARCH  |SMITH |
+    30|SALES     |JAMES |
+    30|SALES     |TURNER|
+    30|SALES     |BLAKE |
+    30|SALES     |MARTIN|
+    30|SALES     |WARD  |
+    30|SALES     |ALLEN |
+      |          |YODA  |
+```
+
+`RIGHT OUTER JOIN` 시 `OPERATIONS` 가 누락된다
+누락된 모든 부분을 출력해야 한다
+
+```sql
+SELECT
+        d.deptno
+    ,   d.dname
+    ,   e1.ename
+    FROM dept d
+    FULL OUTER JOIN emp e1
+        ON e1.deptno = d.deptno;
+```
+
+`FULL OUTER JOIN` 을 사용하면 누란된 모든 부분역시 같이 출력된다
+
+다음처럼 `FULL OUTER JOIN` 을 구현할수 있다
+
+```sql
+SELECT
+        d.deptno
+    ,   d.dname
+    ,   e.ename
+    FROM dept d
+    LEFT JOIN emp e
+    ON d.deptno = e.deptno
+UNION
+SELECT
+        d.deptno
+    ,   d.dname
+    ,   e.ename
+    FROM dept d
+    RIGHT JOIN emp e
+    ON d.deptno = e.deptno;
+```
+
+## 연산 및 비교에서 NULL 사용
+
+`NULL` 사용시 연산을 하면 `NULL` 값이 나온다
+그러므로 `NULL` 일때 숫자값으로 변경해주는것이 좋다
+
+```sql
+SELECT
+        ename
+    ,   comm
+    ,   COALESCE(comm, 0)
+FROM
+    emp
+WHERE coalesce(comm, 0) < (
+    SELECT comm
+        FROM emp
+    WHERE ename = 'WARD'
+);
+```
+
+`COALESCE` 는 이럴때 사용하기 좋은 함수이다
